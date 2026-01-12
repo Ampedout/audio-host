@@ -1,8 +1,3 @@
-WORKING js
-
-
-
-
 (function () {
   // Bind once
   if (window.SART_UI_Begin) return;
@@ -137,7 +132,7 @@ WORKING js
   }
 
   // ===== Timing =====
-  const STIM_MS = 300;
+  const STIM_MS = 550;
   const BLANK_MS = 1000;
   const DURATION_MS = 60_000;
   const COUNTDOWN_SEC = 5;
