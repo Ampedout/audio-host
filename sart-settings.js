@@ -18,7 +18,6 @@
     return "sart_" + Date.now() + "_" + Math.random().toString(16).slice(2);
   }
 
-  // sendBeacon using x-www-form-urlencoded is the most “Zapier friendly”
   function sendToZapierOnce(fields) {
     try {
       const sid = String(fields.session_id || "");
@@ -42,7 +41,6 @@
       if (ok) {
         try { localStorage.setItem(key, "1"); } catch (e) {}
       } else {
-        // If sendBeacon fails (rare), do NOT throw or break UI
         console.warn("sendBeacon returned false");
       }
     } catch (e) {
@@ -50,10 +48,14 @@
     }
   }
 
+  // =========================
+  // UX: buffer after countdown
+  // =========================
+  const PRE_TEST_DELAY_MS = 1200; // set to 1500 if you want 1.5s
+
   function computeSummary(trials, responses, stimMs, blankMs) {
     const trialMs = stimMs + blankMs;
 
-    // Only one response per trial is recorded by design, but guard anyway
     const respondedByTrial = new Map();
     for (let i = 0; i < responses.length; i++) {
       const r = responses[i];
@@ -73,7 +75,6 @@
       if (!isNoGo && !responded) misses++;
       if (isNoGo && responded) falseAlarms++;
 
-      // Average RT on GO trials where user responded
       if (!isNoGo && responded) {
         const trialStart = i * trialMs;
         const rt = r.t_ms - trialStart;
@@ -85,9 +86,9 @@
     }
 
     return {
-      hits: hits,
-      misses: misses,
-      falseAlarms: falseAlarms,
+      hits,
+      misses,
+      falseAlarms,
       avg_rt_ms: rtN ? Math.round(rtSum / rtN) : ""
     };
   }
@@ -154,7 +155,6 @@
     trials: [],
     keyHandler: null,
 
-    // store all tests so we submit ONE time at the end
     allTrials: [null, null, null, null],
     allResponses: [null, null, null, null]
   };
@@ -245,7 +245,7 @@
   }
 
   // ======================================================
-  // TEST AUDIO (PC: HTMLAudio, iPhone: WebAudio buffers)
+  // ✅ TEST AUDIO (PC: HTMLAudio, iPhone: WebAudio buffers)
   // ======================================================
 
   const TEST_AUDIO_MAP = {
@@ -268,9 +268,9 @@
     { key: "crying", url: "https://ampedout.github.io/audio-host/Crying.mp3", delayMs: 10000, vol: 0.30 }
   ];
 
-  // Desktop / non-iOS: HTMLAudio
+  // ---------- Desktop / non-iOS: HTMLAudio ----------
   let audioToken = 0;
-  const players = new Map(); // key -> HTMLAudioElement
+  const players = new Map();
 
   function getPlayer(key) {
     let a = players.get(key);
@@ -303,17 +303,17 @@
 
   function desktopStopAll() {
     audioToken++;
-    for (const [key, a] of players.entries()) {
+    for (const [, a] of players.entries()) {
       const cur = a.volume || 0;
       if (a.paused || cur <= 0.001) {
-        try { a.pause(); } catch (e) {}
-        try { a.currentTime = 0; } catch (e) {}
+        try { a.pause(); } catch {}
+        try { a.currentTime = 0; } catch {}
         a.volume = 0;
         continue;
       }
       rampVolume(a, cur, 0, FADE_OUT_MS, () => {
-        try { a.pause(); } catch (e) {}
-        try { a.currentTime = 0; } catch (e) {}
+        try { a.pause(); } catch {}
+        try { a.currentTime = 0; } catch {}
         a.volume = 0;
       });
     }
@@ -322,17 +322,17 @@
   function desktopStartSilent(key, url) {
     const a = getPlayer(key);
     if (a.src !== url) {
-      try { a.pause(); } catch (e) {}
-      try { a.currentTime = 0; } catch (e) {}
+      try { a.pause(); } catch {}
+      try { a.currentTime = 0; } catch {}
       a.src = url;
-      try { a.load(); } catch (e) {}
+      try { a.load(); } catch {}
     }
     a.volume = 0;
     a.muted = false;
     try {
       const p = a.play();
       if (p && typeof p.catch === "function") p.catch(() => {});
-    } catch (e) {}
+    } catch {}
     return a;
   }
 
@@ -347,19 +347,19 @@
           const p = a.play();
           if (p && typeof p.catch === "function") p.catch(() => {});
         }
-      } catch (e) {}
+      } catch {}
 
       const cur = a.volume || 0;
       rampVolume(a, cur, targetVol, FADE_IN_MS);
     }, delayMs);
   }
 
-  // iPhone: WebAudio buffer engine
+  // ---------- iPhone: WebAudio buffer engine ----------
   const IOS = {
     ctx: null,
     master: null,
-    buffers: new Map(), // url -> AudioBuffer
-    active: new Map() // key -> { src: AudioBufferSourceNode, gain: GainNode }
+    buffers: new Map(),
+    active: new Map()
   };
 
   function ensureIOSCtx_SYNC() {
@@ -379,7 +379,7 @@
         IOS.master.connect(IOS.ctx.destination);
       }
       return true;
-    } catch (e) {
+    } catch {
       return false;
     }
   }
@@ -406,7 +406,7 @@
     audioToken++;
     if (!IOS.ctx) return;
 
-    for (const [key, obj] of IOS.active.entries()) {
+    for (const [, obj] of IOS.active.entries()) {
       try {
         const t0 = IOS.ctx.currentTime;
         const t1 = t0 + (FADE_OUT_MS / 1000);
@@ -414,15 +414,15 @@
         obj.gain.gain.cancelScheduledValues(t0);
         obj.gain.gain.setValueAtTime(obj.gain.gain.value, t0);
         obj.gain.gain.linearRampToValueAtTime(0, t1);
-      } catch (e) {}
+      } catch {}
 
       setTimeout(() => {
-        try { obj.src.stop(0); } catch (e) {}
-        try { obj.src.disconnect(); } catch (e) {}
-        try { obj.gain.disconnect(); } catch (e) {}
-        IOS.active.delete(key);
+        try { obj.src.stop(0); } catch {}
+        try { obj.src.disconnect(); } catch {}
+        try { obj.gain.disconnect(); } catch {}
       }, FADE_OUT_MS + 80);
     }
+    IOS.active.clear();
   }
 
   async function iosStartTrack(key, url, delayMs, targetVol) {
@@ -439,14 +439,14 @@
 
     const existing = IOS.active.get(key);
     if (existing) {
-      try { existing.src.stop(0); } catch (e) {}
-      try { existing.src.disconnect(); } catch (e) {}
-      try { existing.gain.disconnect(); } catch (e) {}
+      try { existing.src.stop(0); } catch {}
+      try { existing.src.disconnect(); } catch {}
+      try { existing.gain.disconnect(); } catch {}
       IOS.active.delete(key);
     }
 
     const gain = IOS.ctx.createGain();
-    gain.gain.value = 0; // start silent
+    gain.gain.value = 0;
     gain.connect(IOS.master);
 
     const src = IOS.ctx.createBufferSource();
@@ -464,12 +464,12 @@
       gain.gain.linearRampToValueAtTime(targetVol, fadeEnd);
       src.start(startAt);
     } catch (e) {
-      try { src.start(0); } catch (_) {}
+      try { src.start(0); } catch {}
       try {
         const t0 = IOS.ctx.currentTime;
         gain.gain.setValueAtTime(0, t0);
         gain.gain.linearRampToValueAtTime(targetVol, t0 + (FADE_IN_MS / 1000));
-      } catch (_) {}
+      } catch {}
     }
   }
 
@@ -493,6 +493,7 @@
     // iPhone: WebAudio scheduling
     if (IS_IOS && HAS_WEBAUDIO && ensureIOSCtx_SYNC()) {
       iosStartTrack("base", baseUrl, baseDelay, BASE_VOL);
+
       if (testNum === 4) {
         for (const layer of TEST4_LAYERS) {
           iosStartTrack(layer.key, layer.url, layer.delayMs, layer.vol);
@@ -501,7 +502,7 @@
       return;
     }
 
-    // Desktop
+    // Desktop behavior
     desktopStartSilent("base", baseUrl);
     desktopScheduleFadeIn("base", baseDelay, BASE_VOL);
 
@@ -512,6 +513,8 @@
       }
     }
   }
+
+  // ======================================================
 
   async function runTest() {
     state.isRunning = true;
@@ -526,6 +529,10 @@
 
     display.style.display = "block";
     attachSpaceCapture();
+
+    // ✅ NEW: give the participant a beat before the first number appears
+    await sleep(PRE_TEST_DELAY_MS);
+
     state.testStartPerf = performance.now();
 
     for (let i = 0; i < state.trials.length; i++) {
@@ -664,7 +671,7 @@
     // Fade out welcome audio when starting Test 1 (your existing welcome script)
     window.SART_FadeOutWelcome && window.SART_FadeOutWelcome(4000);
 
-    // Start test audio
+    // Start test audio (this is where iPhone WebAudio is resumed via user gesture)
     startAudioForCurrentTest();
 
     instructionsBlock.style.display = "none";
