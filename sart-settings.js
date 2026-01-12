@@ -1,97 +1,13 @@
+<script>
 (function () {
   // Bind once
   if (window.SART_UI_Begin) return;
 
   const $ = (id) => document.getElementById(id);
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
   const HAS_WEBAUDIO = !!(window.AudioContext || window.webkitAudioContext);
-
-  // =========================
-  // ZAPIER (ONE CALL AT END)
-  // =========================
-  const ZAPIER_URL = "https://hooks.zapier.com/hooks/catch/25979880/uwv4hdq/";
-  const SEND_GUARD_PREFIX = "SART_SENT_";
-
-  function makeSessionId() {
-    return "sart_" + Date.now() + "_" + Math.random().toString(16).slice(2);
-  }
-
-  function sendToZapierOnce(fields) {
-    try {
-      const sid = String(fields.session_id || "");
-      if (!sid) return;
-
-      const key = SEND_GUARD_PREFIX + sid;
-
-      // prevent duplicates if user refreshes / double-triggers
-      try {
-        if (localStorage.getItem(key)) return;
-      } catch (e) {}
-
-      const body = new URLSearchParams();
-      for (const k in fields) body.set(k, String(fields[k] ?? ""));
-
-      const blob = new Blob([body.toString()], {
-        type: "application/x-www-form-urlencoded;charset=utf-8"
-      });
-
-      const ok = navigator.sendBeacon(ZAPIER_URL, blob);
-      if (ok) {
-        try { localStorage.setItem(key, "1"); } catch (e) {}
-      } else {
-        console.warn("sendBeacon returned false");
-      }
-    } catch (e) {
-      console.warn("Zapier send failed:", e);
-    }
-  }
-
-  // =========================
-  // UX: buffer after countdown
-  // =========================
-  const PRE_TEST_DELAY_MS = 1200; // set to 1500 if you want 1.5s
-
-  function computeSummary(trials, responses, stimMs, blankMs) {
-    const trialMs = stimMs + blankMs;
-
-    const respondedByTrial = new Map();
-    for (let i = 0; i < responses.length; i++) {
-      const r = responses[i];
-      if (!respondedByTrial.has(r.trialIndex)) respondedByTrial.set(r.trialIndex, r);
-    }
-
-    let hits = 0, misses = 0, falseAlarms = 0;
-    let rtSum = 0, rtN = 0;
-
-    for (let i = 0; i < trials.length; i++) {
-      const v = trials[i];
-      const isNoGo = (v === 3);
-      const r = respondedByTrial.get(i);
-      const responded = !!r;
-
-      if (!isNoGo && responded) hits++;
-      if (!isNoGo && !responded) misses++;
-      if (isNoGo && responded) falseAlarms++;
-
-      if (!isNoGo && responded) {
-        const trialStart = i * trialMs;
-        const rt = r.t_ms - trialStart;
-        if (rt >= 0 && rt <= trialMs) {
-          rtSum += rt;
-          rtN += 1;
-        }
-      }
-    }
-
-    return {
-      hits,
-      misses,
-      falseAlarms,
-      avg_rt_ms: rtN ? Math.round(rtSum / rtN) : ""
-    };
-  }
 
   // Elements
   const nameBlock = $("sart_nameBlock");
@@ -108,12 +24,15 @@
   const display = $("sart_display");
   const stimEl = $("sart_stim");
 
+  // Optional stage element (if you have it in your test block)
+  const stageEl = $("sart_stage");
+
   const messageWrap = $("sart_messageWrap");
   const messageTitle = $("sart_messageTitle");
   const messageBody = $("sart_messageBody");
   const nextBtn = $("sart_nextBtn");
 
-  // Safety check
+  // Safety check (stageEl is OPTIONAL)
   const required = [
     nameBlock, nameInput, warn,
     instructionsBlock,
@@ -142,21 +61,20 @@
 
   const state = {
     subject: "",
-    session_id: makeSessionId(),
-
     testIndex: 0, // 0..3
     isRunning: false,
+
     trialActive: false,
     respondedThisTrial: false,
     trialIndex: -1,
     currentValue: null,
+
     testStartPerf: 0,
     responses: [],
     trials: [],
-    keyHandler: null,
 
-    allTrials: [null, null, null, null],
-    allResponses: [null, null, null, null]
+    keyHandler: null,
+    tapHandler: null
   };
 
   function randInt(min, max) {
@@ -164,7 +82,7 @@
   }
 
   function pickNon3Digit() {
-    const non3 = [1,2,4,5,6,7,8,9];
+    const non3 = [1, 2, 4, 5, 6, 7, 8, 9];
     return non3[Math.floor(Math.random() * non3.length)];
   }
 
@@ -192,6 +110,20 @@
     return trials;
   }
 
+  // Single place to record a response (SPACE + TAP both call this)
+  function registerResponse() {
+    if (state.isRunning && state.trialActive && !state.respondedThisTrial) {
+      state.respondedThisTrial = true;
+      state.responses.push({
+        t_ms: Math.round(performance.now() - state.testStartPerf),
+        testIndex: state.testIndex + 1,
+        trialIndex: state.trialIndex,
+        value: state.currentValue
+      });
+    }
+  }
+
+  // -------- SPACE (keyboard) --------
   function attachSpaceCapture() {
     function onKeyDown(e) {
       if (e.code !== "Space") return;
@@ -200,15 +132,7 @@
       const isTyping = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
       if (!isTyping) e.preventDefault();
 
-      if (state.isRunning && state.trialActive && !state.respondedThisTrial) {
-        state.respondedThisTrial = true;
-        state.responses.push({
-          t_ms: Math.round(performance.now() - state.testStartPerf),
-          testIndex: state.testIndex + 1,
-          trialIndex: state.trialIndex,
-          value: state.currentValue
-        });
-      }
+      registerResponse();
     }
 
     window.addEventListener("keydown", onKeyDown, { passive: false });
@@ -220,6 +144,58 @@
       window.removeEventListener("keydown", state.keyHandler, { passive: false });
       state.keyHandler = null;
     }
+  }
+
+  // -------- TAP (touch/mouse) --------
+  // We attach to stageEl if present, otherwise display, and also a document-level fallback.
+  // Only active while test is running, so it won't break buttons/screens.
+  function attachTapCapture() {
+    const targetEl = stageEl || display;
+
+    // Make taps feel responsive on mobile
+    try {
+      targetEl.style.touchAction = "manipulation";
+      targetEl.style.userSelect = "none";
+      targetEl.style.webkitUserSelect = "none";
+    } catch (e) {}
+
+    function onPointerDown(e) {
+      // Only capture during active test
+      if (!state.isRunning) return;
+
+      // If tap happened inside the test area, record it.
+      // This avoids catching taps on other page UI if any.
+      const inTestArea =
+        (targetEl && targetEl.contains(e.target)) ||
+        (display && display.contains(e.target)) ||
+        (stageEl && stageEl.contains(e.target));
+
+      if (!inTestArea) return;
+
+      // Prevent iOS double-tap zoom / text selection while test is active
+      e.preventDefault();
+
+      registerResponse();
+    }
+
+    // Attach to primary target
+    targetEl.addEventListener("pointerdown", onPointerDown, { passive: false });
+
+    // Document fallback (some Carrd layers/overlays can intercept taps)
+    // Capture phase helps if overlays sit above the test element.
+    document.addEventListener("pointerdown", onPointerDown, { passive: false, capture: true });
+
+    state.tapHandler = onPointerDown;
+  }
+
+  function detachTapCapture() {
+    if (!state.tapHandler) return;
+
+    const targetEl = stageEl || display;
+    try { targetEl.removeEventListener("pointerdown", state.tapHandler, { passive: false }); } catch (e) {}
+    try { document.removeEventListener("pointerdown", state.tapHandler, { passive: false, capture: true }); } catch (e) {}
+
+    state.tapHandler = null;
   }
 
   async function runCountdown() {
@@ -268,9 +244,8 @@
     { key: "crying", url: "https://ampedout.github.io/audio-host/Crying.mp3", delayMs: 10000, vol: 0.30 }
   ];
 
-  // ---------- Desktop / non-iOS: HTMLAudio ----------
   let audioToken = 0;
-  const players = new Map();
+  const players = new Map(); // key -> HTMLAudioElement
 
   function getPlayer(key) {
     let a = players.get(key);
@@ -303,17 +278,17 @@
 
   function desktopStopAll() {
     audioToken++;
-    for (const [, a] of players.entries()) {
+    for (const [key, a] of players.entries()) {
       const cur = a.volume || 0;
       if (a.paused || cur <= 0.001) {
-        try { a.pause(); } catch {}
-        try { a.currentTime = 0; } catch {}
+        try { a.pause(); } catch (e) {}
+        try { a.currentTime = 0; } catch (e) {}
         a.volume = 0;
         continue;
       }
       rampVolume(a, cur, 0, FADE_OUT_MS, () => {
-        try { a.pause(); } catch {}
-        try { a.currentTime = 0; } catch {}
+        try { a.pause(); } catch (e) {}
+        try { a.currentTime = 0; } catch (e) {}
         a.volume = 0;
       });
     }
@@ -322,17 +297,17 @@
   function desktopStartSilent(key, url) {
     const a = getPlayer(key);
     if (a.src !== url) {
-      try { a.pause(); } catch {}
-      try { a.currentTime = 0; } catch {}
+      try { a.pause(); } catch (e) {}
+      try { a.currentTime = 0; } catch (e) {}
       a.src = url;
-      try { a.load(); } catch {}
+      try { a.load(); } catch (e) {}
     }
     a.volume = 0;
     a.muted = false;
     try {
       const p = a.play();
       if (p && typeof p.catch === "function") p.catch(() => {});
-    } catch {}
+    } catch (e) {}
     return a;
   }
 
@@ -347,24 +322,22 @@
           const p = a.play();
           if (p && typeof p.catch === "function") p.catch(() => {});
         }
-      } catch {}
+      } catch (e) {}
 
       const cur = a.volume || 0;
       rampVolume(a, cur, targetVol, FADE_IN_MS);
     }, delayMs);
   }
 
-  // ---------- iPhone: WebAudio buffer engine ----------
   const IOS = {
     ctx: null,
     master: null,
-    buffers: new Map(),
-    active: new Map()
+    buffers: new Map(), // url -> AudioBuffer
+    active: new Map() // key -> { src, gain }
   };
 
   function ensureIOSCtx_SYNC() {
     if (!IS_IOS || !HAS_WEBAUDIO) return false;
-
     try {
       if (!IOS.ctx) {
         const AC = window.AudioContext || window.webkitAudioContext;
@@ -379,7 +352,7 @@
         IOS.master.connect(IOS.ctx.destination);
       }
       return true;
-    } catch {
+    } catch (e) {
       return false;
     }
   }
@@ -406,7 +379,7 @@
     audioToken++;
     if (!IOS.ctx) return;
 
-    for (const [, obj] of IOS.active.entries()) {
+    for (const [key, obj] of IOS.active.entries()) {
       try {
         const t0 = IOS.ctx.currentTime;
         const t1 = t0 + (FADE_OUT_MS / 1000);
@@ -414,15 +387,15 @@
         obj.gain.gain.cancelScheduledValues(t0);
         obj.gain.gain.setValueAtTime(obj.gain.gain.value, t0);
         obj.gain.gain.linearRampToValueAtTime(0, t1);
-      } catch {}
+      } catch (e) {}
 
       setTimeout(() => {
-        try { obj.src.stop(0); } catch {}
-        try { obj.src.disconnect(); } catch {}
-        try { obj.gain.disconnect(); } catch {}
+        try { obj.src.stop(0); } catch (e) {}
+        try { obj.src.disconnect(); } catch (e) {}
+        try { obj.gain.disconnect(); } catch (e) {}
+        IOS.active.delete(key);
       }, FADE_OUT_MS + 80);
     }
-    IOS.active.clear();
   }
 
   async function iosStartTrack(key, url, delayMs, targetVol) {
@@ -439,9 +412,9 @@
 
     const existing = IOS.active.get(key);
     if (existing) {
-      try { existing.src.stop(0); } catch {}
-      try { existing.src.disconnect(); } catch {}
-      try { existing.gain.disconnect(); } catch {}
+      try { existing.src.stop(0); } catch (e) {}
+      try { existing.src.disconnect(); } catch (e) {}
+      try { existing.gain.disconnect(); } catch (e) {}
       IOS.active.delete(key);
     }
 
@@ -464,12 +437,12 @@
       gain.gain.linearRampToValueAtTime(targetVol, fadeEnd);
       src.start(startAt);
     } catch (e) {
-      try { src.start(0); } catch {}
+      try { src.start(0); } catch (_) {}
       try {
         const t0 = IOS.ctx.currentTime;
         gain.gain.setValueAtTime(0, t0);
         gain.gain.linearRampToValueAtTime(targetVol, t0 + (FADE_IN_MS / 1000));
-      } catch {}
+      } catch (_) {}
     }
   }
 
@@ -477,7 +450,6 @@
     const testNum = state.testIndex + 1;
     const baseUrl = TEST_AUDIO_MAP[testNum];
 
-    // Stop previous test audio (fade out)
     if (IS_IOS && HAS_WEBAUDIO && IOS.ctx) {
       iosFadeOutAndStopAll();
     } else {
@@ -490,10 +462,8 @@
       ? BASE_DELAY_BY_TEST[testNum]
       : DEFAULT_BASE_DELAY_MS;
 
-    // iPhone: WebAudio scheduling
     if (IS_IOS && HAS_WEBAUDIO && ensureIOSCtx_SYNC()) {
       iosStartTrack("base", baseUrl, baseDelay, BASE_VOL);
-
       if (testNum === 4) {
         for (const layer of TEST4_LAYERS) {
           iosStartTrack(layer.key, layer.url, layer.delayMs, layer.vol);
@@ -502,7 +472,6 @@
       return;
     }
 
-    // Desktop behavior
     desktopStartSilent("base", baseUrl);
     desktopScheduleFadeIn("base", baseDelay, BASE_VOL);
 
@@ -529,10 +498,7 @@
 
     display.style.display = "block";
     attachSpaceCapture();
-
-    // ✅ NEW: give the participant a beat before the first number appears
-    await sleep(PRE_TEST_DELAY_MS);
-
+    attachTapCapture(); // ✅ TAP enabled
     state.testStartPerf = performance.now();
 
     for (let i = 0; i < state.trials.length; i++) {
@@ -553,20 +519,16 @@
     }
 
     detachSpaceCapture();
+    detachTapCapture(); // ✅ TAP cleanup
     display.style.display = "none";
     state.isRunning = false;
     showRunning(false);
 
-    // Fade out test audio when finished
     if (IS_IOS && HAS_WEBAUDIO && IOS.ctx) {
       iosFadeOutAndStopAll();
     } else {
       desktopStopAll();
     }
-
-    // store this test’s raw
-    state.allTrials[state.testIndex] = state.trials.slice();
-    state.allResponses[state.testIndex] = state.responses.slice();
 
     showCompletion();
   }
@@ -582,57 +544,8 @@
       nextBtn.textContent = `Begin Test ${state.testIndex + 2}`;
       nextBtn.style.display = "inline-flex";
     } else {
-      // FINAL: compute + send ONE Zap
-      const timestamp = new Date().toISOString();
-
-      const s1 = computeSummary(state.allTrials[0] || [], state.allResponses[0] || [], STIM_MS, BLANK_MS);
-      const s2 = computeSummary(state.allTrials[1] || [], state.allResponses[1] || [], STIM_MS, BLANK_MS);
-      const s3 = computeSummary(state.allTrials[2] || [], state.allResponses[2] || [], STIM_MS, BLANK_MS);
-      const s4 = computeSummary(state.allTrials[3] || [], state.allResponses[3] || [], STIM_MS, BLANK_MS);
-
-      const rawObj = {
-        timestamp: timestamp,
-        subject_name: state.subject,
-        session_id: state.session_id,
-        tests: [
-          { testIndex: 1, trials: state.allTrials[0] || [], responses: state.allResponses[0] || [] },
-          { testIndex: 2, trials: state.allTrials[1] || [], responses: state.allResponses[1] || [] },
-          { testIndex: 3, trials: state.allTrials[2] || [], responses: state.allResponses[2] || [] },
-          { testIndex: 4, trials: state.allTrials[3] || [], responses: state.allResponses[3] || [] }
-        ]
-      };
-
-      sendToZapierOnce({
-        timestamp: timestamp,
-        subject_name: state.subject,
-        session_id: state.session_id,
-
-        t1_hits: s1.hits,
-        t1_misses: s1.misses,
-        t1_false_alarms: s1.falseAlarms,
-        t1_avg_rt_ms: s1.avg_rt_ms,
-
-        t2_hits: s2.hits,
-        t2_misses: s2.misses,
-        t2_false_alarms: s2.falseAlarms,
-        t2_avg_rt_ms: s2.avg_rt_ms,
-
-        t3_hits: s3.hits,
-        t3_misses: s3.misses,
-        t3_false_alarms: s3.falseAlarms,
-        t3_avg_rt_ms: s3.avg_rt_ms,
-
-        t4_hits: s4.hits,
-        t4_misses: s4.misses,
-        t4_false_alarms: s4.falseAlarms,
-        t4_avg_rt_ms: s4.avg_rt_ms,
-
-        raw_json: JSON.stringify(rawObj)
-      });
-
       messageTitle.textContent = "";
-      messageBody.textContent =
-        "Congratulations! You have completed all the tests!\n\nThank you for your participation";
+      messageBody.textContent = "Congratulations! You have completed all the tests!\n\nThank you for your participation";
       nextBtn.style.display = "none";
     }
   }
@@ -647,14 +560,7 @@
       nameInput.focus();
       return;
     }
-
     state.subject = name;
-
-    // new session per successful Begin
-    state.session_id = makeSessionId();
-    state.testIndex = 0;
-    state.allTrials = [null, null, null, null];
-    state.allResponses = [null, null, null, null];
 
     nameBlock.style.display = "none";
     instructionsBlock.style.display = "block";
@@ -668,10 +574,9 @@
   window.SART_UI_StartTest1 = async function () {
     if (state.isRunning) return;
 
-    // Fade out welcome audio when starting Test 1 (your existing welcome script)
+    // Fade out welcome audio when starting Test 1
     window.SART_FadeOutWelcome && window.SART_FadeOutWelcome(4000);
 
-    // Start test audio (this is where iPhone WebAudio is resumed via user gesture)
     startAudioForCurrentTest();
 
     instructionsBlock.style.display = "none";
@@ -693,3 +598,4 @@
     await runTest();
   };
 })();
+</script>
