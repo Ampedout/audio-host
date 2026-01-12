@@ -108,6 +108,9 @@
   const display = $("sart_display");
   const stimEl = $("sart_stim");
 
+  // Optional (if present)
+  const stageEl = $("sart_stage");
+
   const messageWrap = $("sart_messageWrap");
   const messageTitle = $("sart_messageTitle");
   const messageBody = $("sart_messageBody");
@@ -155,6 +158,9 @@
     trials: [],
     keyHandler: null,
 
+    // ✅ TAP support
+    tapHandler: null,
+
     allTrials: [null, null, null, null],
     allResponses: [null, null, null, null]
   };
@@ -192,6 +198,19 @@
     return trials;
   }
 
+  // ✅ single response recorder used by SPACE + TAP
+  function registerResponse() {
+    if (state.isRunning && state.trialActive && !state.respondedThisTrial) {
+      state.respondedThisTrial = true;
+      state.responses.push({
+        t_ms: Math.round(performance.now() - state.testStartPerf),
+        testIndex: state.testIndex + 1,
+        trialIndex: state.trialIndex,
+        value: state.currentValue
+      });
+    }
+  }
+
   function attachSpaceCapture() {
     function onKeyDown(e) {
       if (e.code !== "Space") return;
@@ -200,15 +219,7 @@
       const isTyping = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
       if (!isTyping) e.preventDefault();
 
-      if (state.isRunning && state.trialActive && !state.respondedThisTrial) {
-        state.respondedThisTrial = true;
-        state.responses.push({
-          t_ms: Math.round(performance.now() - state.testStartPerf),
-          testIndex: state.testIndex + 1,
-          trialIndex: state.trialIndex,
-          value: state.currentValue
-        });
-      }
+      registerResponse();
     }
 
     window.addEventListener("keydown", onKeyDown, { passive: false });
@@ -220,6 +231,38 @@
       window.removeEventListener("keydown", state.keyHandler, { passive: false });
       state.keyHandler = null;
     }
+  }
+
+  // ✅ TAP capture (uses sart_stage if present, otherwise sart_display)
+  function attachTapCapture() {
+    const targetEl = stageEl || display;
+    if (!targetEl) return;
+
+    // Make taps feel responsive on mobile
+    try {
+      targetEl.style.touchAction = "manipulation";
+      targetEl.style.userSelect = "none";
+      targetEl.style.webkitUserSelect = "none";
+    } catch (e) {}
+
+    function onPointerDown(e) {
+      if (!state.isRunning) return;
+      // only accept taps within the test area (avoid catching other page UI)
+      if (!targetEl.contains(e.target)) return;
+      e.preventDefault();
+      registerResponse();
+    }
+
+    targetEl.addEventListener("pointerdown", onPointerDown, { passive: false });
+    state.tapHandler = onPointerDown;
+  }
+
+  function detachTapCapture() {
+    const targetEl = stageEl || display;
+    if (!targetEl || !state.tapHandler) return;
+
+    try { targetEl.removeEventListener("pointerdown", state.tapHandler, { passive: false }); } catch (e) {}
+    state.tapHandler = null;
   }
 
   async function runCountdown() {
@@ -529,6 +572,7 @@
 
     display.style.display = "block";
     attachSpaceCapture();
+    attachTapCapture(); // ✅ TAP ON
 
     // ✅ NEW: give the participant a beat before the first number appears
     await sleep(PRE_TEST_DELAY_MS);
@@ -553,6 +597,7 @@
     }
 
     detachSpaceCapture();
+    detachTapCapture(); // ✅ TAP OFF
     display.style.display = "none";
     state.isRunning = false;
     showRunning(false);
@@ -671,7 +716,7 @@
     // Fade out welcome audio when starting Test 1 (your existing welcome script)
     window.SART_FadeOutWelcome && window.SART_FadeOutWelcome(4000);
 
-    // Start test audio (this is where iPhone WebAudio is resumed via user gesture)
+    // Start test audio
     startAudioForCurrentTest();
 
     instructionsBlock.style.display = "none";
