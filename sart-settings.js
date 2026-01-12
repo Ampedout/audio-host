@@ -216,7 +216,7 @@
       if (e.code !== "Space") return;
 
       const el = e.target;
-      const isTyping = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      const isTyping = el && (el.tagName === "INPUT" || el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
       if (!isTyping) e.preventDefault();
 
       registerResponse();
@@ -291,11 +291,12 @@
   // ✅ TEST AUDIO (PC: HTMLAudio, iPhone: WebAudio buffers)
   // ======================================================
 
+  // ✅ CHANGE #1: Move Metal to Test 1, make Test 4 silent
   const TEST_AUDIO_MAP = {
-    1: null,
+    1: "https://ampedout.github.io/audio-host/Metal2.mp3",
     2: "https://ampedout.github.io/audio-host/Brown.mp3",
     3: "https://ampedout.github.io/audio-host/Classical.mp3",
-    4: "https://ampedout.github.io/audio-host/Metal2.mp3"
+    4: null
   };
 
   const DEFAULT_BASE_DELAY_MS = 4000;
@@ -537,7 +538,8 @@
     if (IS_IOS && HAS_WEBAUDIO && ensureIOSCtx_SYNC()) {
       iosStartTrack("base", baseUrl, baseDelay, BASE_VOL);
 
-      if (testNum === 4) {
+      // ✅ CHANGE #2: layers now play on Test 1 (Metal test)
+      if (testNum === 1) {
         for (const layer of TEST4_LAYERS) {
           iosStartTrack(layer.key, layer.url, layer.delayMs, layer.vol);
         }
@@ -549,7 +551,8 @@
     desktopStartSilent("base", baseUrl);
     desktopScheduleFadeIn("base", baseDelay, BASE_VOL);
 
-    if (testNum === 4) {
+    // ✅ CHANGE #2: layers now play on Test 1 (Metal test)
+    if (testNum === 1) {
       for (const layer of TEST4_LAYERS) {
         desktopStartSilent(layer.key, layer.url);
         desktopScheduleFadeIn(layer.key, layer.delayMs, layer.vol);
